@@ -74,6 +74,9 @@ local function defaultConfig(home)
         uuid_type = "%Y%m%d%H%M",
         -- UUID separator
         uuid_sep = "-",
+        -- Immediately write the file when creating a note.
+        -- Opens the note as an unsaved buffer when set to `false`
+        write_on_create = true,
         -- if not nil, replaces any spaces in the title when it is used in filename generation
         filename_space_subst = nil,
         -- if true, make the filename lowercase
@@ -579,29 +582,41 @@ local function create_note_from_template(
     end
 
     -- now write the output file, substituting vars line by line
-    local file_dir = filepath:match("(.*/)") or ""
+    local file_dir  = vim.fs.dirname(filepath)
+    local file_name = vim.fs.basename(filepath)
     check_dir_and_ask(file_dir, "Notes", function(dir_succeed)
         if dir_succeed == false then
             return
         end
 
-        local ofile = io.open(filepath, "a")
-
-        for _, line in pairs(lines) do
-            ofile:write(
-                templates.subst_templated_values(
-                    line,
-                    title,
-                    calendar_info,
-                    uuid,
-                    M.Cfg.calendar_opts.calendar_monday
-                ) .. "\n"
+        for k, line in pairs(lines) do
+            lines[k] = templates.subst_templated_values(
+                line,
+                title,
+                calendar_info,
+                uuid,
+                M.Cfg.calendar_opts.calendar_monday
             )
         end
 
-        ofile:flush()
-        ofile:close()
-        callback()
+        if M.Cfg.write_on_create then
+            -- Write the file to disk
+            local ofile = io.open(filepath, "a")
+            for _, line in pairs(lines) do
+                ofile:write(line)
+            end
+            ofile:flush()
+            ofile:close()
+
+            callback()
+        else
+            -- Don't write the file, but simply open it in a unsaved buffer
+            vim.cmd([[new | setlocal filetype=markdown]])
+            vim.cmd("lcd " .. file_dir)
+            vim.cmd("file " .. file_name)
+            vim.api.nvim_put(lines, "l", false, false)
+            vim.cmd([[normal $]])
+        end
     end)
 end
 
@@ -1318,6 +1333,7 @@ function picker_actions.close(opts)
         actions.close(prompt_bufnr)
         if opts.erase then
             if fileutils.file_exists(opts.erase_file) then
+                vim.print("Deleting file ".. opts.erase_file)
                 vim.fn.delete(opts.erase_file)
             end
         end
